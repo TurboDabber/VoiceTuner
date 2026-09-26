@@ -25,6 +25,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.turbodabber.voicetuner.audio.*
+import com.turbodabber.voicetuner.audio.dsp.TuningScale
 import com.turbodabber.voicetuner.service.AudioProcessingService
 import kotlin.math.roundToInt
 import java.io.File
@@ -47,7 +48,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val preferences = getSharedPreferences("effects", MODE_PRIVATE)
-        AudioSession.effects = EffectSettings(preferences.getFloat("autotune", 0f), preferences.getFloat("reverb", 0.25f))
+        AudioSession.effects = EffectSettings(
+            autotune = preferences.getFloat("autotune", 0f), reverb = preferences.getFloat("reverb", 0.25f),
+            hardTune = preferences.getBoolean("hardTune", true), rootNote = preferences.getInt("rootNote", 9).coerceIn(0, 11),
+            scale = runCatching { TuningScale.valueOf(preferences.getString("scale", "MINOR")!!) }.getOrDefault(TuningScale.MINOR))
         refreshPermissions()
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(
@@ -71,7 +75,11 @@ class MainActivity : ComponentActivity() {
                     )
                 }
                 fun changeEffects(value: EffectSettings) { effects = value; AudioSession.effects = value }
-                fun saveEffects() { preferences.edit().putFloat("autotune", effects.autotune).putFloat("reverb", effects.reverb).apply() }
+                fun saveEffects() {
+                    preferences.edit().putFloat("autotune", effects.autotune).putFloat("reverb", effects.reverb)
+                        .putBoolean("hardTune", effects.hardTune).putInt("rootNote", effects.rootNote)
+                        .putString("scale", effects.scale.name).apply()
+                }
                 val idle = session.phase == SessionPhase.IDLE
                 Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
                     Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
@@ -87,8 +95,21 @@ class MainActivity : ComponentActivity() {
                                 Text(session.message)
                             }
                         }
-                        EffectSlider("Autotune", effects.autotune,
-                            "W przygotowaniu — ten suwak jeszcze nie zmienia wysokości głosu.",
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(selected = effects.hardTune, onClick = {
+                                changeEffects(effects.copy(hardTune = true)); saveEffects()
+                            }, label = { Text("Hard Tune") })
+                            FilterChip(selected = !effects.hardTune, onClick = {
+                                changeEffects(effects.copy(hardTune = false)); saveEffects()
+                            }, label = { Text("Łagodny") })
+                        }
+                        TuningSelectors(effects) { changeEffects(it); saveEffects() }
+                        OutlinedButton(onClick = {
+                            changeEffects(effects.copy(autotune = 1f, reverb = 0.15f, hardTune = true)); saveEffects()
+                        }) { Text("Preset RAP · Hard Tune 100%") }
+                        EffectSlider("Autotune / Hard Tune", effects.autotune,
+                            if (effects.hardTune) "100%: szybkie przeskoki do nut skali. Dopasuj tonację do bitu i rapuj melodyjnie."
+                            else "Łagodniejsze dojście do nut skali. 0% wyłącza korekcję.",
                             { changeEffects(effects.copy(autotune = it)) }, { saveEffects() })
                         EffectSlider("Reverb", effects.reverb, "Od lekkiej przestrzeni do zalewającego pogłosu. 100%: sam pogłos, długi ogon.",
                             { changeEffects(effects.copy(reverb = it)) }, { saveEffects() })
@@ -235,4 +256,34 @@ private fun SessionPhase.label() = when (this) {
     SessionPhase.STARTING -> "URUCHAMIANIE"
     SessionPhase.RUNNING -> "AKTYWNY"
     SessionPhase.STOPPING -> "ZATRZYMYWANIE"
+}
+
+@Composable
+private fun TuningSelectors(settings: EffectSettings, onChange: (EffectSettings) -> Unit) {
+    val notes = listOf("C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B / H")
+    var keyMenu by remember { mutableStateOf(false) }
+    var scaleMenu by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Tonacja i skala", style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box {
+                OutlinedButton(onClick = { keyMenu = true }, enabled = settings.scale != TuningScale.CHROMATIC) {
+                    Text("Tonacja: ${notes[settings.rootNote]}")
+                }
+                DropdownMenu(expanded = keyMenu, onDismissRequest = { keyMenu = false }) {
+                    notes.forEachIndexed { index, note ->
+                        DropdownMenuItem(text = { Text(note) }, onClick = { keyMenu = false; onChange(settings.copy(rootNote = index)) })
+                    }
+                }
+            }
+            Box {
+                OutlinedButton(onClick = { scaleMenu = true }) { Text(settings.scale.label) }
+                DropdownMenu(expanded = scaleMenu, onDismissRequest = { scaleMenu = false }) {
+                    TuningScale.entries.forEach { scale ->
+                        DropdownMenuItem(text = { Text(scale.label) }, onClick = { scaleMenu = false; onChange(settings.copy(scale = scale)) })
+                    }
+                }
+            }
+        }
+    }
 }

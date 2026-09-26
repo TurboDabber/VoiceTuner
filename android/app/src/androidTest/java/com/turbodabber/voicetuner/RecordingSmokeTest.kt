@@ -26,8 +26,8 @@ class RecordingSmokeTest : Instrumentation() {
             AacRecording(file, 48_000).use { writer ->
                 repeat(375) { frame ->
                     for (i in block.indices) block[i] = if (frame < 188)
-                        (0.3 * sin(2 * Math.PI * 440 * (frame * block.size + i) / 48_000)).toFloat() else 0f
-                    dsp.process(block, block.size, EffectSettings(reverb = 0.7f))
+                        (0.3 * sin(2 * Math.PI * 451 * (frame * block.size + i) / 48_000)).toFloat() else 0f
+                    dsp.process(block, block.size, EffectSettings(autotune = 1f, reverb = 0.7f))
                     writer.write(block, block.size)
                 }
                 writer.finish()

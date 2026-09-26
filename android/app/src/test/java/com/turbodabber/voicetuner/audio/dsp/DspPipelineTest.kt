@@ -40,10 +40,10 @@ class DspPipelineTest {
         DspPipeline(48_000).process(samples, 2, EffectSettings(reverb = 0f))
         assertEquals(7f, samples[2], 0f)
     }
-    @Test fun pitchStageExplicitlyRemainsBypass() {
+    @Test fun zeroPitchStrengthRemainsBypass() {
         val samples = floatArrayOf(0.2f, -0.4f)
         val expected = samples.copyOf()
-        DspPipeline(48_000).process(samples, 2, EffectSettings(1f, 0f))
+        DspPipeline(48_000).process(samples, 2, EffectSettings(0f, 0f))
         assertArrayEquals(expected, samples, 0f)
     }
 

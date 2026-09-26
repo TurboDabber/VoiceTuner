@@ -5,7 +5,7 @@ MVP aplikacji Android w katalogu [`android/`](android/): Kotlin, Jetpack Compose
 ## Co działa w tej wersji
 
 - Dwa suwaki 0–100% z zapamiętywaniem ustawień: Autotune i Reverb.
-- **Reverb przetwarza dźwięk. Autotune jest na razie jawnym bypass-em** — wartość suwaka trafia do pipeline'u, ale nie zmienia wysokości głosu. UI informuje o tym ograniczeniu.
+- **Autotune / Hard Tune i Reverb przetwarzają dźwięk** w odsłuchu i nagraniach. Wybierz tonację i skalę: molową, durową, pentatonikę molową lub chromatyczną (A4 = 440 Hz). 0% to bypass, 50% częściowa korekcja, 100% pełna korekcja do nut skali.
 - Lokalny tor `AudioRecord → DSP → AudioTrack`, mono float PCM, 48 kHz, bloki po 256 próbek.
 - Nagrywanie bez odsłuchu: `AudioRecord → DSP → AAC-LC → M4A` (128 kb/s, mono 48 kHz), do 10 minut. STOP zwalnia mikrofon, dopisuje do 6 sekund ogona reverbu i finalizuje plik.
 - Odsłuch ostatniego nagrania i udostępnianie przez Android Sharesheet, np. do Messengera. Plik jest dostępny przez FileProvider z tymczasowym prawem odczytu.
@@ -18,13 +18,21 @@ MVP aplikacji Android w katalogu [`android/`](android/): Kotlin, Jetpack Compose
 
 ## Wiadomość z efektami w Messengerze
 
+### Brzmienie Hard Tune
+
+Wybierz **Preset RAP · Hard Tune 100%**: ustawia pełną korekcję i Reverb 15%, zachowując wybraną tonację oraz skalę. Domyślnie to A-moll. Dopasuj tonację do podkładu; nie ma automatycznego rozpoznawania tonacji bitu. Melodyjny rap lub śpiew daje wyraźniejsze przeskoki niż zwykła mowa. Pentatonika molowa ma mniej dozwolonych nut i daje większe skoki. Tryb „Łagodny” wolniej dochodzi do nut. Ustawienia są zapamiętywane i działają także w nowych plikach M4A.
+
+Hard Tune ma reakcję wygładzania około 1 ms przy 100% (tryb łagodny: 25 ms), ale całkowita reakcja uwzględnia też okno detektora i bufor audio. To nie oznacza 1 ms opóźnienia odsłuchu. Algorytm pozostaje podstawowym efektem monofonicznym, bez pełnego zachowania formantów; nie gwarantuje jakości studyjnych wtyczek.
+
+### Nagrywanie i wysyłka
+
 1. Ustaw Reverb i nadaj uprawnienie mikrofonu.
 2. Wybierz **Nagraj wiadomość z efektami**. Słuchawki i zgoda na overlay nie są wymagane w tym trybie. Jeśli overlay jest dozwolony, STOP pojawi się też nad innymi aplikacjami.
 3. Nagraj głos i naciśnij **STOP**. Poczekaj na zakończenie zapisu.
 4. W sekcji „Ostatnie nagranie” wybierz **Odsłuchaj nagranie** lub **Udostępnij · Messenger**.
 5. W systemowym oknie wybierz Messengera, rozmowę i potwierdź wysłanie.
 
-Udostępniamy załącznik audio `audio/mp4` (`.m4a`). To nie jest natywna wiadomość nagrana przyciskiem mikrofonu Messengera; sposób prezentacji i obsługa załącznika zależą od jego wersji. Nie podmieniamy wejścia podczas rozmowy. Nagranie zawiera efekty ustawione w trakcie rejestracji; późniejsze zmiany suwaka nie zmieniają zapisanego pliku. Autotune nadal pozostaje etapem do implementacji.
+Udostępniamy załącznik audio `audio/mp4` (`.m4a`). To nie jest natywna wiadomość nagrana przyciskiem mikrofonu Messengera; sposób prezentacji i obsługa załącznika zależą od jego wersji. Nie podmieniamy wejścia podczas rozmowy. Nagranie zawiera efekty ustawione w trakcie rejestracji; późniejsze zmiany suwaka nie zmieniają zapisanego pliku.
 
 ## Ograniczenia Androida — ważne przed dalszą implementacją
 
@@ -80,7 +88,9 @@ android/
         AudioEngine.kt                  # Jeden wątek audio, I/O i sprzątanie
         AacRecording.kt                 # Strumieniowy zapis AAC/M4A, publikacja po finalizacji
         dsp/
-          AudioProcessor.kt             # Kontrakt DSP + jawny bypass pitch correction
+          AudioProcessor.kt             # Kontrakt DSP
+          PitchCorrectionProcessor.kt   # Detekcja F0 i korekcja wysokości według skali
+          TuningScale.kt                # Nuty skali, transpozycja i wybór nuty docelowej
           DspPipeline.kt                # Pitch → reverb → ograniczenie amplitudy
           ReverbProcessor.kt            # Opóźnienia ze sprzężeniem i dyfuzja
       service/
@@ -95,13 +105,13 @@ Silnik przetwarza tylko tyle próbek, ile zwrócił mikrofon, obsługuje częśc
 
 Reverb to pogłos z czterema tłumionymi filtrami grzebieniowymi (59–97 ms) i dwoma filtrami all-pass; wet mix jest wygładzany. Suwak zwiększa też feedback od 0.55 do 0.96, wydłużając ogon. Przy 100% wyjście jest wet-only, ze wzmocnionym pogłosem. Ograniczenie amplitudy jest prostym clampem, nie masteringowym limiterem i nie zabezpiecza przed akustycznym sprzężeniem głośnika z mikrofonem. Niska latencja jest żądaniem do sterownika, nie gwarancją: Java/Kotlin, bufory urządzenia i routing dodają opóźnienie. Nie zmierzono jeszcze opóźnienia na telefonie.
 
-Kolejna implementacja powinna zastąpić `PitchCorrectionPlaceholder` detektorem F0 (np. YIN), wyborem docelowej nuty i pitch shifterem z kontrolą artefaktów. Potrzebne będą testy tonu, mowy, ciszy i spółgłosek. Suwak jest już przekazywany do tego etapu; nie udajemy działania autotune innym efektem. Przy docelowym niskim opóźnieniu warto przenieść DSP i audio I/O do C++/Oboe po pomiarach.
+`PitchCorrectionProcessor` używa znormalizowanej funkcji różnicowej w stylu YIN, interpolacji okresu oraz dwóch nakładających się odczytów linii opóźniającej. Detektor analizuje głos około 65–1000 Hz co 5 ms w Hard Tune lub 10 ms w trybie łagodnym po redukcji próbkowania. Korekcja wybiera najbliższą dozwoloną nutę skali; suwak reguluje odległość i szybkość strojenia. Ciche i nieperiodyczne fragmenty przechodzą bez korekcji wysokości. Przy aktywnym efekcie pojawia się dodatkowe opóźnienie (linia odczytu do około 40 ms i czas reakcji detektora). 0% zachowuje próbki bez dodatkowego opóźnienia. To podstawowy algorytm monofoniczny: nie zachowuje formantów, może dodawać modulację i artefakty na przejściach, nie służy do muzyki polifonicznej. Testy tonalne nie zastępują oceny jakości mowy i śpiewu na telefonie. Hard Tune używa kosinusowych przejść między fragmentami i niewielkiej histerezy przy granicy nut. Kolejne kroki: zachowanie formantów, dalsza poprawa jakości pitch shiftera i pomiary wydajności.
 
 ## Weryfikacja na urządzeniu
 
 - Odmów mikrofonu i overlayu: start ma pozostać zablokowany. Nadaj zgody i wróć: stan przycisków powinien się odświeżyć.
 - Bez słuchawek start powinien wyświetlić zgodę: anulowanie nie uruchamia mikrofonu, akceptacja uruchamia odsłuch. Po STOP kolejny start ponownie wymaga akceptacji.
-- Ze słuchawkami: głos słychać na żywo, reverb 0% jest suchy, 100% daje ogon; Autotune pozostaje jawnie nieaktywny.
+- Ze słuchawkami: głos słychać na żywo, reverb 0% jest suchy, 100% daje ogon. Przy reverbie 0% porównaj Autotune 0/50/100%, trzymając jedną samogłoskę lub śpiewaną nutę; potem sprawdź zwykłą mowę.
 - Przejdź na ekran główny i zablokuj ekran: sprawdź zachowanie usługi oraz powiadomienia na swoim telefonie. System może ukrywać overlay na ekranach wrażliwych.
 - Osobno sprawdź trzy ścieżki STOP, kilkukrotny start/stop, obrót ekranu i ponowne otwarcie aplikacji. Po STOP wskaźnik mikrofonu powinien zgasnąć, overlay i powiadomienie zniknąć.
 - Odłącz słuchawki w sesji rozpoczętej bez zgody na głośnik: odsłuch ma się zatrzymać. Sesja z zaakceptowanym ryzykiem może kontynuować po zmianie wyjścia. Rozpocznij rozmowę/odtwarzanie w innej aplikacji lub wyłącz dostęp do mikrofonu w systemie: sprawdź zatrzymanie i komunikat.
