@@ -1,5 +1,6 @@
 package com.turbodabber.voicetuner.service
 
+import com.turbodabber.voicetuner.R
 import android.content.Context
 import android.graphics.PixelFormat
 import android.view.Gravity
@@ -10,8 +11,8 @@ import android.widget.Button
 class StopOverlay(context: Context, onStop: () -> Unit) {
     private val manager = context.getSystemService(WindowManager::class.java)
     private val button = Button(context).apply {
-        text = "■ STOP · VoiceTuner"
-        contentDescription = "Zatrzymaj mikrofon VoiceTuner"
+        text = "■ ${context.getString(R.string.stop)} · VoiceTuner"
+        contentDescription = context.getString(R.string.overlay_stop)
         setTextColor(0xFF101510.toInt())
         backgroundTintList = android.content.res.ColorStateList.valueOf(0xFFB5F56A.toInt())
         setOnClickListener { onStop() }

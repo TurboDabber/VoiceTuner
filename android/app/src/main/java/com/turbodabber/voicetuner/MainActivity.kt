@@ -2,6 +2,7 @@ package com.turbodabber.voicetuner
 
 import android.Manifest
 import android.content.Intent
+import android.content.Context
 import android.content.ClipData
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -18,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -31,6 +33,7 @@ import kotlin.math.roundToInt
 import java.io.File
 
 class MainActivity : ComponentActivity() {
+    override fun attachBaseContext(newBase: Context) { super.attachBaseContext(AppLanguage.wrap(newBase)) }
     private var microphoneGranted by mutableStateOf(false)
     private var overlayGranted by mutableStateOf(false)
     private var notificationsGranted by mutableStateOf(false)
@@ -39,14 +42,15 @@ class MainActivity : ComponentActivity() {
     private var previewPlaying by mutableStateOf(false)
     private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         refreshPermissions()
-        AudioSession.publishRecording(File(filesDir, "recordings").listFiles()
-            ?.filter { it.extension == "m4a" && it.length() > 0 }?.maxByOrNull { it.lastModified() })
-        permissionMessage = if (granted) null else "Brak dostępu do mikrofonu. Możesz nadać go w ustawieniach aplikacji."
+        permissionMessage = if (granted) null else getString(R.string.mic_denied)
     }
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshPermissions() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (AudioSession.state.value.phase == SessionPhase.IDLE) AudioSession.update(SessionPhase.IDLE, getString(R.string.ready))
+        AudioSession.publishRecording(File(filesDir, "recordings").listFiles()
+            ?.filter { it.extension == "m4a" && it.length() > 0 }?.maxByOrNull { it.lastModified() })
         val preferences = getSharedPreferences("effects", MODE_PRIVATE)
         AudioSession.effects = EffectSettings(
             autotune = preferences.getFloat("autotune", 0f), reverb = preferences.getFloat("reverb", 0.25f),
@@ -65,13 +69,13 @@ class MainActivity : ComponentActivity() {
                 if (showSpeakerConsent) {
                     AlertDialog(
                         onDismissRequest = { showSpeakerConsent = false },
-                        title = { Text("Odsłuch bez słuchawek?") },
-                        text = { Text("Głośnik może wracać do mikrofonu i wywołać głośny pisk lub narastające echo, szczególnie przy mocnym reverbie. Zmniejsz głośność telefonu. Zgoda dotyczy tylko tego uruchomienia.") },
+                        title = { Text(getString(R.string.speaker_title)) },
+                        text = { Text(getString(R.string.speaker_warning)) },
                         confirmButton = { TextButton(onClick = {
                             showSpeakerConsent = false
                             startAudio(allowSpeaker = true)
-                        }) { Text("Rozumiem, uruchom") } },
-                        dismissButton = { TextButton(onClick = { showSpeakerConsent = false }) { Text("Anuluj") } }
+                        }) { Text(getString(R.string.accept_start)) } },
+                        dismissButton = { TextButton(onClick = { showSpeakerConsent = false }) { Text(getString(R.string.cancel)) } }
                     )
                 }
                 fun changeEffects(value: EffectSettings) { effects = value; AudioSession.effects = value }
@@ -86,13 +90,18 @@ class MainActivity : ComponentActivity() {
                         .padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                         Text("VOICETUNER / MVP 0.1", color = MaterialTheme.colorScheme.primary,
                             style = MaterialTheme.typography.labelLarge)
-                        Text("Twój głos.\nTwoje brzmienie.", style = MaterialTheme.typography.headlineLarge)
-                        Text("Nagraj głos i udostępnij z efektami", style = MaterialTheme.typography.titleMedium)
+                        LanguagePicker(AppLanguage.current(this@MainActivity), idle) { tag ->
+                            saveEffects()
+                            stopPreview()
+                            AppLanguage.select(this@MainActivity, tag)
+                        }
+                        Text(getString(R.string.headline), style = MaterialTheme.typography.headlineLarge)
+                        Text(getString(R.string.subtitle), style = MaterialTheme.typography.titleMedium)
                         Card(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(if (session.phase == SessionPhase.RUNNING) "● MIKROFON AKTYWNY" else "● ${session.phase.label()}",
+                                Text(if (session.phase == SessionPhase.RUNNING) getString(R.string.mic_active) else "● ${session.phase.label()}",
                                     color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-                                Text(session.message)
+                                Text(session.message.ifEmpty { getString(R.string.ready) })
                             }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -101,61 +110,61 @@ class MainActivity : ComponentActivity() {
                             }, label = { Text("Hard Tune") })
                             FilterChip(selected = !effects.hardTune, onClick = {
                                 changeEffects(effects.copy(hardTune = false)); saveEffects()
-                            }, label = { Text("Łagodny") })
+                            }, label = { Text(getString(R.string.gentle)) })
                         }
                         TuningSelectors(effects) { changeEffects(it); saveEffects() }
                         OutlinedButton(onClick = {
                             changeEffects(effects.copy(autotune = 1f, reverb = 0.15f, hardTune = true)); saveEffects()
-                        }) { Text("Preset RAP · Hard Tune 100%") }
+                        }) { Text(getString(R.string.rap_preset)) }
                         EffectSlider("Autotune / Hard Tune", effects.autotune,
-                            if (effects.hardTune) "100%: szybkie przeskoki do nut skali. Dopasuj tonację do bitu i rapuj melodyjnie."
-                            else "Łagodniejsze dojście do nut skali. 0% wyłącza korekcję.",
+                            if (effects.hardTune) getString(R.string.hard_description)
+                            else getString(R.string.gentle_description),
                             { changeEffects(effects.copy(autotune = it)) }, { saveEffects() })
-                        EffectSlider("Reverb", effects.reverb, "Od lekkiej przestrzeni do zalewającego pogłosu. 100%: sam pogłos, długi ogon.",
+                        EffectSlider("Reverb", effects.reverb, getString(R.string.reverb_description),
                             { changeEffects(effects.copy(reverb = it)) }, { saveEffects() })
                         Button(onClick = {
                             if (idle) startAudio(record = true)
                             else startService(Intent(this@MainActivity, AudioProcessingService::class.java).setAction(AudioProcessingService.ACTION_STOP))
                         }, enabled = microphoneGranted && session.phase != SessionPhase.STOPPING,
-                            modifier = Modifier.fillMaxWidth().height(56.dp)) { Text(if (idle) "Nagraj wiadomość z efektami" else "STOP") }
-                        Text("Nagrywanie bez odsłuchu i bez słuchawek. Naciśnij STOP, aby zapisać plik M4A. Maksymalnie 10 minut.",
+                            modifier = Modifier.fillMaxWidth().height(56.dp)) { Text(if (idle) getString(R.string.record) else getString(R.string.stop)) }
+                        Text(getString(R.string.record_hint),
                             style = MaterialTheme.typography.bodySmall)
                         recording?.let { file ->
                             Card(Modifier.fillMaxWidth()) {
                                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("Ostatnie nagranie", style = MaterialTheme.typography.titleMedium)
-                                    Text("${file.length() / 1024} KB · M4A z efektami")
+                                    Text(getString(R.string.last_recording), style = MaterialTheme.typography.titleMedium)
+                                    Text(getString(R.string.recording_size, file.length() / 1024))
                                     OutlinedButton(onClick = { if (previewPlaying) stopPreview() else preview(file) }, enabled = idle) {
-                                        Text(if (previewPlaying) "Zatrzymaj odtwarzanie" else "Odsłuchaj nagranie")
+                                        Text(if (previewPlaying) getString(R.string.stop_playback) else getString(R.string.play_recording))
                                     }
-                                    Button(onClick = { shareRecording(file) }, enabled = idle) { Text("Udostępnij · Messenger") }
-                                    Text("Wybierz Messengera i odbiorcę w oknie udostępniania. To plik audio, nie nagrywanie bezpośrednio w Messengerze.",
+                                    Button(onClick = { shareRecording(file) }, enabled = idle) { Text(getString(R.string.share)) }
+                                    Text(getString(R.string.share_hint),
                                         style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                         }
-                        Text("Zalecane słuchawki przewodowe lub USB. Bez nich możesz uruchomić odsłuch po zaakceptowaniu ryzyka sprzężenia.",
+                        Text(getString(R.string.headphones_hint),
                             style = MaterialTheme.typography.bodyMedium)
                         if (!microphoneGranted) {
                             OutlinedButton(onClick = { microphonePermission.launch(Manifest.permission.RECORD_AUDIO) },
-                                modifier = Modifier.fillMaxWidth(), enabled = idle) { Text("1. Zezwól na mikrofon") }
+                                modifier = Modifier.fillMaxWidth(), enabled = idle) { Text(getString(R.string.allow_mic)) }
                         }
                         if (!overlayGranted) {
                             OutlinedButton(onClick = {
                                 runCatching { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
-                                    .onFailure { permissionMessage = "Otwórz ustawienia systemowe i zezwól VoiceTuner na wyświetlanie nad innymi aplikacjami." }
-                            }, modifier = Modifier.fillMaxWidth(), enabled = idle) { Text("2. Włącz pływający STOP") }
+                                    .onFailure { permissionMessage = getString(R.string.overlay_settings_hint) }
+                            }, modifier = Modifier.fillMaxWidth(), enabled = idle) { Text(getString(R.string.allow_overlay)) }
                         }
                         if (Build.VERSION.SDK_INT >= 33 && !notificationsGranted) {
                             TextButton(onClick = { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) },
                                 modifier = Modifier.fillMaxWidth(), enabled = idle) {
-                                Text("Włącz powiadomienie ze STOP (opcjonalnie)")
+                                Text(getString(R.string.allow_notification))
                             }
                         }
                         permissionMessage?.let { message ->
                             Text(message, color = MaterialTheme.colorScheme.error)
                             TextButton(onClick = { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }) {
-                                Text("Ustawienia aplikacji")
+                                Text(getString(R.string.app_settings))
                             }
                         }
                         Button(onClick = {
@@ -168,11 +177,11 @@ class MainActivity : ComponentActivity() {
                             }
                         }, enabled = if (idle) microphoneGranted && overlayGranted else session.phase != SessionPhase.STOPPING,
                             modifier = Modifier.fillMaxWidth().height(56.dp)) {
-                            Text(if (idle) "Uruchom odsłuch" else "STOP")
+                            Text(if (idle) getString(R.string.start_monitor) else getString(R.string.stop))
                         }
                         HorizontalDivider()
-                        Text("Działa wewnątrz VoiceTuner", style = MaterialTheme.typography.titleSmall)
-                        Text("Nagrania są zapisywane lokalnie. Wysyłasz je samodzielnie przez udostępnianie. Odsłuch nie zapisuje plików. Aplikacja nie zmienia mikrofonu podczas rozmów w Messengerze.",
+                        Text(getString(R.string.local_title), style = MaterialTheme.typography.titleSmall)
+                        Text(getString(R.string.local_description),
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -185,13 +194,13 @@ class MainActivity : ComponentActivity() {
         if (!microphoneGranted || (!record && !overlayGranted)) return
         stopPreview()
         // Called only by a tap while this activity is visible (microphone while-in-use rules).
-        AudioSession.update(SessionPhase.STARTING, "Uruchamianie mikrofonu…")
+        AudioSession.update(SessionPhase.STARTING, getString(R.string.starting_mic))
         runCatching {
             ContextCompat.startForegroundService(this, Intent(this, AudioProcessingService::class.java)
                 .setAction(AudioProcessingService.ACTION_START)
                 .putExtra(AudioProcessingService.EXTRA_RECORD, record)
                 .putExtra(AudioProcessingService.EXTRA_ALLOW_SPEAKER, allowSpeaker))
-        }.onFailure { AudioSession.update(SessionPhase.IDLE, it.message ?: "Nie udało się uruchomić usługi.") }
+        }.onFailure { AudioSession.update(SessionPhase.IDLE, getString(R.string.service_failed)) }
     }
     private fun stopPreview() {
         previewPlayer?.release()
@@ -207,12 +216,12 @@ class MainActivity : ComponentActivity() {
                 player.setOnPreparedListener { it.start() }
                 player.setOnCompletionListener { stopPreview() }
                 player.setOnErrorListener { _, _, _ ->
-                    stopPreview(); permissionMessage = "Nie udało się odtworzyć nagrania."; true
+                    stopPreview(); permissionMessage = getString(R.string.play_failed); true
                 }
                 previewPlaying = true
                 player.prepareAsync()
             }
-        }.onFailure { stopPreview(); permissionMessage = "Nie udało się otworzyć nagrania." }
+        }.onFailure { stopPreview(); permissionMessage = getString(R.string.open_failed) }
     }
     private fun shareRecording(file: File) {
         stopPreview()
@@ -222,11 +231,11 @@ class MainActivity : ComponentActivity() {
             val send = Intent(Intent.ACTION_SEND).apply {
                 type = "audio/mp4"
                 putExtra(Intent.EXTRA_STREAM, uri)
-                clipData = ClipData.newRawUri("Nagranie VoiceTuner", uri)
+                clipData = ClipData.newRawUri(getString(R.string.recording_label), uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            startActivity(Intent.createChooser(send, "Udostępnij nagranie — wybierz Messenger"))
-        }.onFailure { permissionMessage = "Nie udało się udostępnić pliku: ${it.message}" }
+            startActivity(Intent.createChooser(send, getString(R.string.share_chooser)))
+        }.onFailure { permissionMessage = getString(R.string.share_failed) }
     }
     override fun onStop() { stopPreview(); super.onStop() }
     override fun onResume() { super.onResume(); refreshPermissions() }
@@ -251,11 +260,12 @@ private fun EffectSlider(title: String, amount: Float, description: String,
     }
 }
 
+@Composable
 private fun SessionPhase.label() = when (this) {
-    SessionPhase.IDLE -> "GOTOWY"
-    SessionPhase.STARTING -> "URUCHAMIANIE"
-    SessionPhase.RUNNING -> "AKTYWNY"
-    SessionPhase.STOPPING -> "ZATRZYMYWANIE"
+    SessionPhase.IDLE -> stringResource(R.string.idle)
+    SessionPhase.STARTING -> stringResource(R.string.starting)
+    SessionPhase.RUNNING -> stringResource(R.string.active)
+    SessionPhase.STOPPING -> stringResource(R.string.stopping)
 }
 
 @Composable
@@ -264,11 +274,11 @@ private fun TuningSelectors(settings: EffectSettings, onChange: (EffectSettings)
     var keyMenu by remember { mutableStateOf(false) }
     var scaleMenu by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("Tonacja i skala", style = MaterialTheme.typography.titleSmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.tuning_title), style = MaterialTheme.typography.titleSmall)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Box {
                 OutlinedButton(onClick = { keyMenu = true }, enabled = settings.scale != TuningScale.CHROMATIC) {
-                    Text("Tonacja: ${notes[settings.rootNote]}")
+                    Text(stringResource(R.string.key_label, notes[settings.rootNote]))
                 }
                 DropdownMenu(expanded = keyMenu, onDismissRequest = { keyMenu = false }) {
                     notes.forEachIndexed { index, note ->
@@ -277,13 +287,39 @@ private fun TuningSelectors(settings: EffectSettings, onChange: (EffectSettings)
                 }
             }
             Box {
-                OutlinedButton(onClick = { scaleMenu = true }) { Text(settings.scale.label) }
+                OutlinedButton(onClick = { scaleMenu = true }) { Text(scaleLabel(settings.scale)) }
                 DropdownMenu(expanded = scaleMenu, onDismissRequest = { scaleMenu = false }) {
                     TuningScale.entries.forEach { scale ->
-                        DropdownMenuItem(text = { Text(scale.label) }, onClick = { scaleMenu = false; onChange(settings.copy(scale = scale)) })
+                        DropdownMenuItem(text = { Text(scaleLabel(scale)) }, onClick = { scaleMenu = false; onChange(settings.copy(scale = scale)) })
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun scaleLabel(scale: TuningScale): String = stringResource(when (scale) {
+    TuningScale.CHROMATIC -> R.string.scale_chromatic
+    TuningScale.MINOR -> R.string.scale_minor
+    TuningScale.MAJOR -> R.string.scale_major
+    TuningScale.MINOR_PENTATONIC -> R.string.scale_pentatonic
+})
+
+@Composable
+private fun LanguagePicker(current: String, enabled: Boolean, onSelect: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Column {
+        Box {
+            OutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+                Text("${stringResource(R.string.language)} · ${AppLanguage.options[current]}")
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                AppLanguage.options.forEach { (tag, name) ->
+                    DropdownMenuItem(text = { Text(name) }, onClick = { expanded = false; onSelect(tag) })
+                }
+            }
+        }
+        if (!enabled) Text(stringResource(R.string.language_hint), style = MaterialTheme.typography.bodySmall)
     }
 }

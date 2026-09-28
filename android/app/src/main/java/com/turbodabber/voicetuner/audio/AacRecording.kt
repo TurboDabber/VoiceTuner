@@ -1,5 +1,6 @@
 package com.turbodabber.voicetuner.audio
 
+import com.turbodabber.voicetuner.R
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -9,7 +10,7 @@ import java.io.File
 import java.nio.ByteOrder
 
 /** Worker-confined streaming AAC-LC encoder. Only finalized M4A files are published. */
-class AacRecording(private val destination: File, private val sampleRate: Int) : AutoCloseable {
+class AacRecording(private val destination: File, private val sampleRate: Int, private val text: (Int) -> String) : AutoCloseable {
     private val pending = File(destination.parentFile, destination.name + ".partial")
     private var codec: MediaCodec? = null
     private var muxer: MediaMuxer? = null
@@ -43,7 +44,7 @@ class AacRecording(private val destination: File, private val sampleRate: Int) :
         while (offset < count) {
             drain()
             val index = encoder.dequeueInputBuffer(10_000)
-            check(SystemClock.elapsedRealtime() < deadline) { "Koder audio przestał odpowiadać." }
+            check(SystemClock.elapsedRealtime() < deadline) { text(R.string.encoder_stalled) }
             if (index < 0) continue
             val input = checkNotNull(encoder.getInputBuffer(index)).apply { clear(); order(ByteOrder.nativeOrder()) }
             val length = minOf(count - offset, input.remaining() / 2)
@@ -85,12 +86,12 @@ class AacRecording(private val destination: File, private val sampleRate: Int) :
     }
 
     fun finish(): File {
-        check(samplesWritten > 0) { "Nagranie jest puste. Nagraj głos i spróbuj ponownie." }
+        check(samplesWritten > 0) { text(R.string.empty_recording) }
         val encoder = checkNotNull(codec)
         val deadline = SystemClock.elapsedRealtime() + 5000
         var queued = false
         while (!ended) {
-            check(SystemClock.elapsedRealtime() < deadline) { "Nie udało się zakończyć zapisu nagrania." }
+            check(SystemClock.elapsedRealtime() < deadline) { text(R.string.finish_failed) }
             if (!queued) {
                 val index = encoder.dequeueInputBuffer(10_000)
                 if (index >= 0) {
@@ -106,7 +107,7 @@ class AacRecording(private val destination: File, private val sampleRate: Int) :
         muxerStarted = false
         muxer!!.release()
         muxer = null
-        check(pending.renameTo(destination)) { "Nie udało się zapisać pliku nagrania." }
+        check(pending.renameTo(destination)) { text(R.string.save_failed) }
         committed = true
         return destination
     }

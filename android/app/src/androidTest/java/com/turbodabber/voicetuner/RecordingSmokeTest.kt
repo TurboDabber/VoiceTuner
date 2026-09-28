@@ -23,7 +23,7 @@ class RecordingSmokeTest : Instrumentation() {
         try {
             val dsp = DspPipeline(48_000)
             val block = FloatArray(256)
-            AacRecording(file, 48_000).use { writer ->
+            AacRecording(file, 48_000) { targetContext.getString(it) }.use { writer ->
                 repeat(375) { frame ->
                     for (i in block.indices) block[i] = if (frame < 188)
                         (0.3 * sin(2 * Math.PI * 451 * (frame * block.size + i) / 48_000)).toFloat() else 0f

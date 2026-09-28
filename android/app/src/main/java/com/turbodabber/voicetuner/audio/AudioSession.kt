@@ -6,7 +6,7 @@ import java.io.File
 import com.turbodabber.voicetuner.audio.dsp.TuningScale
 
 enum class SessionPhase { IDLE, STARTING, RUNNING, STOPPING }
-data class SessionState(val phase: SessionPhase = SessionPhase.IDLE, val message: String = "Gotowy do odsłuchu")
+data class SessionState(val phase: SessionPhase = SessionPhase.IDLE, val message: String = "")
 data class EffectSettings(val autotune: Float = 0f, val reverb: Float = 0.25f,
                           val hardTune: Boolean = true, val rootNote: Int = 9,
                           val scale: TuningScale = TuningScale.MINOR)

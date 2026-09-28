@@ -1,5 +1,6 @@
 package com.turbodabber.voicetuner.audio
 
+import com.turbodabber.voicetuner.R
 import android.annotation.SuppressLint
 import android.media.*
 import android.os.Build
@@ -13,7 +14,8 @@ import java.io.File
 /** Single worker owns AudioRecord/AudioTrack and releases both in finally.
  * Non-blocking I/O keeps STOP bounded even when a device stops delivering samples.
  */
-class AudioEngine(private val recordingFile: File? = null,
+class AudioEngine(private val text: (Int) -> String,
+                  private val recordingFile: File? = null,
                   private val onStarted: () -> Unit, private val onFinished: (String?, File?) -> Unit) {
     private val running = AtomicBoolean(false)
     fun stop() { running.set(false) }
@@ -33,13 +35,13 @@ class AudioEngine(private val recordingFile: File? = null,
                 val encoding = AudioFormat.ENCODING_PCM_FLOAT
                 val inputMin = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, encoding)
                 val outputMin = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, encoding)
-                check(inputMin > 0 && outputMin > 0) { "Urządzenie nie obsługuje toru mono 48 kHz / float PCM." }
+                check(inputMin > 0 && outputMin > 0) { text(R.string.unsupported_audio) }
                 recorder = AudioRecord.Builder()
                     .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
                     .setAudioFormat(AudioFormat.Builder().setSampleRate(sampleRate).setEncoding(encoding)
                         .setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
                     .setBufferSizeInBytes(maxOf(inputMin * 2, 4096)).build()
-                if (recordingFile != null) recording = AacRecording(recordingFile, sampleRate)
+                if (recordingFile != null) recording = AacRecording(recordingFile, sampleRate, text)
                 else player = AudioTrack.Builder()
                     .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
@@ -49,7 +51,7 @@ class AudioEngine(private val recordingFile: File? = null,
                     .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
                     .setBufferSizeInBytes(maxOf(outputMin * 2, 4096)).build()
                 check(recorder.state == AudioRecord.STATE_INITIALIZED && (player == null || player.state == AudioTrack.STATE_INITIALIZED)) {
-                    "Nie udało się zainicjować urządzeń audio."
+                    text(R.string.audio_init_failed)
                 }
                 val pipeline = DspPipeline(sampleRate)
                 val block = FloatArray(256)
@@ -57,16 +59,16 @@ class AudioEngine(private val recordingFile: File? = null,
                 var capturedSamples = 0L
                 if (running.get()) {
                     recorder.startRecording()
-                    check(recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Mikrofon jest niedostępny." }
+                    check(recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) { text(R.string.mic_unavailable) }
                     player?.play()
                     onStarted()
                 }
                 while (running.get()) {
                     if (Build.VERSION.SDK_INT >= 29 && recorder.activeRecordingConfiguration?.isClientSilenced == true) {
-                        error("Android wyciszył mikrofon — inna aplikacja lub ustawienia prywatności mają pierwszeństwo.")
+                        error(text(R.string.mic_silenced))
                     }
                     val count = recorder.read(block, 0, block.size, AudioRecord.READ_NON_BLOCKING)
-                    check(count >= 0) { "Błąd odczytu mikrofonu ($count)." }
+                    check(count >= 0) { text(R.string.read_failed) }
                     if (count == 0) { LockSupport.parkNanos(2_000_000); continue }
                     pipeline.process(block, count, AudioSession.effects)
                     recording?.write(block, count)
@@ -75,7 +77,7 @@ class AudioEngine(private val recordingFile: File? = null,
                     var offset = 0
                     while (player != null && offset < count && running.get()) {
                         val written = player.write(block, offset, count - offset, AudioTrack.WRITE_NON_BLOCKING)
-                        check(written >= 0) { "Błąd odtwarzania ($written)." }
+                        check(written >= 0) { text(R.string.write_failed) }
                         offset += written
                         if (written == 0) LockSupport.parkNanos(2_000_000)
                     }
@@ -93,9 +95,9 @@ class AudioEngine(private val recordingFile: File? = null,
                         tailSamples -= count
                     }
                     result = recording.finish()
-                } else if (recording != null) error("Nagranie jest puste. Spróbuj ponownie.")
+                } else if (recording != null) error(text(R.string.empty_recording))
             } catch (e: Exception) {
-                failure = e.message ?: "Nie udało się przetworzyć audio."
+                failure = e.message ?: text(R.string.audio_failed)
             } finally {
                 running.set(false)
                 recorder?.let { runCatching { it.stop() }; it.release() }
